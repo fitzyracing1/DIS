@@ -16,7 +16,7 @@ import { createCheckApi, checkApiOptions, parseCheckRequest, runSafeCheck } from
 import { makeGuard, cidrsFromEnv } from '../lib/net-guard.mjs';
 import { Discovery } from '../lib/discovery.mjs';
 import { Registrar } from '../lib/register.mjs';
-import { checkHttpGuarded } from '../lib/checks.mjs';
+import { checkHttpGuarded, targetLabel } from '../lib/checks.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -85,11 +85,11 @@ try {
 const statePath = flag('no-state') ? null
   : opt('state', process.env.DIS_STATE || join(process.env.DATA_DIR || 'data', 'state.json'));
 
-const describe = (t) => (t.type === 'http' ? t.url : t.type === 'tcp' ? `${t.host}:${t.port}` : `${t.recordType} ${t.host}`);
+const describe = targetLabel;
 
 if (cmd === 'validate') {
   console.log(`config ok: ${config.targets.length} target(s), ${config.alerts.length} alert webhook(s) active, light-report ${config.lightReport ? `on → ${config.lightReport.url}` : 'off'}`);
-  for (const t of config.targets) console.log(`  ${t.name.padEnd(24)} ${t.type.padEnd(4)} every ${t.intervalSeconds}s  ${describe(t)}`);
+  for (const t of config.targets) console.log(`  ${t.name.padEnd(24)} ${t.type.padEnd(6)} every ${t.intervalSeconds}s  ${describe(t)}`);
   const d = config.discovery;
   console.log(`discovery ${d.enabled ? `on: every ${d.everyMinutes} min, sources ${Object.keys(d.sources).filter((k) => d.sources[k]).join(',')}, max ${d.maxTargets} watched` : 'off'}; register ${d.register ? 'on' : 'off'}`);
   process.exit(0);

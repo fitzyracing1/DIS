@@ -1,0 +1,34 @@
+{
+  "title": "Phone providers",
+  "defaults": { "intervalSeconds": 300, "timeoutMs": 15000, "maxLatencyMs": 10000, "failThreshold": 2, "recoverThreshold": 1 },
+  "targets": [
+    { "name": "apple-siri",            "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "Siri" },
+    { "name": "apple-find-my",         "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "Find My" },
+    { "name": "apple-icloud-signin",   "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "iCloud Account & Sign In" },
+    { "name": "apple-icloud-backup",   "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "iCloud Backup" },
+    { "name": "apple-imessage",        "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "iMessage" },
+    { "name": "apple-facetime",        "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "FaceTime" },
+    { "name": "apple-device-activation", "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/system_status_en_US.js", "service": "iOS Device Activation" },
+    { "name": "apple-apns",            "type": "status", "format": "apple", "url": "https://www.apple.com/support/systemstatus/data/developer/system_status_en_US.js", "service": "APNS" },
+
+    { "name": "firebase-fcm",          "type": "status", "format": "google", "url": "https://status.firebase.google.com/incidents.json", "product": "Cloud Messaging" },
+    { "name": "firebase-auth",         "type": "status", "format": "google", "url": "https://status.firebase.google.com/incidents.json", "product": "Authentication" },
+    { "name": "firebase-phone-verify", "type": "status", "format": "google", "url": "https://status.firebase.google.com/incidents.json", "product": "Phone Number Verification" },
+    { "name": "firebase-all",          "type": "status", "format": "google", "url": "https://status.firebase.google.com/incidents.json" },
+    { "name": "google-cloud",          "type": "status", "format": "google", "url": "https://status.cloud.google.com/incidents.json" },
+    { "name": "workspace-gmail",       "type": "status", "format": "google", "url": "https://www.google.com/appsstatus/dashboard/incidents.json", "product": "Gmail" },
+    { "name": "workspace-sign-in",     "type": "status", "format": "google", "url": "https://www.google.com/appsstatus/dashboard/incidents.json", "product": "Google Sign In" },
+    { "name": "workspace-voice",       "type": "status", "format": "google", "url": "https://www.google.com/appsstatus/dashboard/incidents.json", "product": "Google Voice" },
+    { "name": "workspace-all",         "type": "status", "format": "google", "url": "https://www.google.com/appsstatus/dashboard/incidents.json" },
+
+    { "name": "twilio",                "type": "status", "format": "statuspage", "url": "https://status.twilio.com/api/v2/status.json" },
+    { "name": "twilio-messaging",      "type": "status", "format": "statuspage", "url": "https://status.twilio.com/api/v2/summary.json", "component": "PROGRAMMABLE MESSAGING" },
+    { "name": "twilio-voice-us1",      "type": "status", "format": "statuspage", "url": "https://status.twilio.com/api/v2/summary.json", "component": "PROGRAMMABLE VOICE US1" },
+    { "name": "twilio-carrier-network", "type": "status", "format": "statuspage", "url": "https://status.twilio.com/api/v2/summary.json", "component": "CARRIER NETWORK" }
+  ],
+  "alerts": [
+    { "type": "discord", "url": "${DISCORD_WEBHOOK_URL}" },
+    { "type": "slack", "url": "${SLACK_WEBHOOK_URL}", "on": ["dark"] },
+    { "type": "json", "url": "${ALERT_WEBHOOK_URL}" }
+  ]
+}

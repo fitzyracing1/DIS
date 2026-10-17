@@ -1,0 +1,17 @@
+{
+  "title": "Example: every check type",
+  "defaults": { "intervalSeconds": 60, "failThreshold": 2 },
+  "targets": [
+    { "name": "site", "type": "http", "url": "https://example.com", "expectStatus": "2xx", "maxLatencyMs": 3000, "keyword": "Example Domain" },
+    { "name": "api-health", "type": "http", "url": "https://example.com/health", "method": "GET", "expectStatus": [200, 204], "headers": { "accept": "application/json" }, "intervalSeconds": 30 },
+    { "name": "postgres", "type": "tcp", "host": "db.example.com", "port": 5432, "timeoutMs": 3000, "intervalSeconds": 120 },
+    { "name": "dns-apex", "type": "dns", "host": "example.com", "recordType": "A" },
+    { "name": "dns-mx", "type": "dns", "host": "example.com", "recordType": "MX", "server": "1.1.1.1" }
+  ],
+  "alerts": [
+    { "type": "discord", "url": "${DISCORD_WEBHOOK_URL}" },
+    { "type": "slack", "url": "${SLACK_WEBHOOK_URL}", "on": ["dark"] },
+    { "type": "json", "url": "${ALERT_WEBHOOK_URL}", "headers": { "authorization": "Bearer ${ALERT_WEBHOOK_TOKEN}" } }
+  ],
+  "lightReport": { "url": "${LIGHT_REPORT_URL}", "prefix": "net-", "heartbeatMinutes": 15 }
+}

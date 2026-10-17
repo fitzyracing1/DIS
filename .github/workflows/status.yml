@@ -1,0 +1,53 @@
+# Serverless mode: GitHub Actions checks your targets on a schedule.
+# The job goes red (exit 1) when anything is dark, so GitHub emails you.
+# Webhooks and light-report are OFF until you add them: they only turn on when the matching
+# repo secret (DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL, ALERT_WEBHOOK_URL) or repo variable
+# (LIGHT_REPORT_URL) is set. Unset secrets expand to "", which disables that adapter.
+# The state file is carried between runs with actions/cache so alerts only fire on lit <-> dark changes.
+name: DIS status
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # GitHub's minimum is 5 minutes, and scheduled runs can be delayed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dis-status
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      LIGHT_REPORT_URL: ${{ vars.LIGHT_REPORT_URL }}
+      # Write tokens for light-report lights (only used when LIGHT_REPORT_URL is set):
+      LIGHT_TOKEN_NET_LIGHT_REPORT: ${{ secrets.LIGHT_TOKEN_NET_LIGHT_REPORT }}
+      LIGHT_TOKEN_NET_LIGHT_REPORT_DARKS: ${{ secrets.LIGHT_TOKEN_NET_LIGHT_REPORT_DARKS }}
+      LIGHT_TOKEN_NET_PATCH_CLOUD: ${{ secrets.LIGHT_TOKEN_NET_PATCH_CLOUD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Show what is enabled
+        run: node bin/dis.mjs validate
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: .dis
+          key: dis-state-${{ github.run_id }}
+          restore-keys: dis-state-
+      - name: Check targets
+        run: node bin/dis.mjs once --state .dis/state.json
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .dis
+          key: dis-state-${{ github.run_id }}

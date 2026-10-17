@@ -1,0 +1,43 @@
+{
+  "title": "fitzyracing1 status",
+  "defaults": {
+    "intervalSeconds": 60,
+    "timeoutMs": 10000,
+    "maxLatencyMs": 5000,
+    "failThreshold": 2,
+    "recoverThreshold": 1
+  },
+  "targets": [
+    {
+      "name": "light-report",
+      "type": "http",
+      "url": "https://light-report-production.up.railway.app",
+      "expectStatus": 200,
+      "keyword": "light-report"
+    },
+    {
+      "name": "light-report-darks",
+      "type": "http",
+      "url": "https://light-report-production.up.railway.app/darks",
+      "expectStatus": 200,
+      "keyword": "Darks"
+    },
+    {
+      "name": "patch-cloud",
+      "type": "http",
+      "url": "https://patch-cloud-production.up.railway.app",
+      "expectStatus": 200,
+      "keyword": "patch-cloud"
+    }
+  ],
+  "alerts": [
+    { "type": "discord", "url": "${DISCORD_WEBHOOK_URL}" },
+    { "type": "slack", "url": "${SLACK_WEBHOOK_URL}" },
+    { "type": "json", "url": "${ALERT_WEBHOOK_URL}" }
+  ],
+  "lightReport": {
+    "url": "${LIGHT_REPORT_URL}",
+    "prefix": "net-",
+    "heartbeatMinutes": 15
+  }
+}

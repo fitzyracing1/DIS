@@ -1,0 +1,22 @@
+{
+  "name": "dis-status",
+  "version": "0.1.0",
+  "description": "Self-hostable status bot: watches your sites and marks each one lit or dark. HTTP, TCP and DNS checks, webhook alerts on change, tiny status page, cron mode, optional light-report adapter.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Joshua Almeida",
+  "repository": "github:fitzyracing1/DIS",
+  "homepage": "https://github.com/fitzyracing1/DIS#readme",
+  "private": true,
+  "bin": {
+    "dis": "bin/dis.mjs"
+  },
+  "main": "lib/index.mjs",
+  "files": ["bin", "lib", "status.config.json", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node bin/dis.mjs serve",
+    "once": "node bin/dis.mjs once",
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -4,6 +4,7 @@
 //   dis once       one-shot (cron / GitHub Actions): check everything, exit 0 all lit, 1 any dark
 //   dis validate   check the config file and print the targets
 //   dis check <url> one guarded lit/dark check of any URL (no config needed)
+//   dis discover   one discovery pass (dry run by default): --since 24h --limit 20 --sources github,npm --check --json --save
 // Options: --config <file>  --state <file>  --port <n>  --json  --retry-delay <ms>  --no-state
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,11 +14,14 @@ import { Monitor } from '../lib/monitor.mjs';
 import { createServer } from '../lib/server.mjs';
 import { createCheckApi, checkApiOptions, parseCheckRequest, runSafeCheck } from '../lib/check-api.mjs';
 import { makeGuard, cidrsFromEnv } from '../lib/net-guard.mjs';
+import { Discovery } from '../lib/discovery.mjs';
+import { Registrar } from '../lib/register.mjs';
+import { checkHttpGuarded } from '../lib/checks.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const VALUE_OPTS = ['--config', '--state', '--port', '--retry-delay', '--type', '--expect', '--max-ms', '--keyword', '--record'];
+const VALUE_OPTS = ['--config', '--state', '--port', '--retry-delay', '--type', '--expect', '--max-ms', '--keyword', '--record', '--since', '--limit', '--sources'];
 const positionals = argv.filter((a, i) => !a.startsWith('-') && !VALUE_OPTS.includes(argv[i - 1]));
 const cmd = positionals[0] || 'serve';
 
@@ -30,6 +34,8 @@ if (flag('help') || flag('h') || cmd === 'help') {
   dis check <url> one lit/dark check of any URL; exit 0 = lit, 1 = dark, 2 = bad input
                   --type http|tcp|dns  --expect <status|record>  --max-ms <n>  --keyword <s>
                   --record A|AAAA|...  --json  --allow-private (skip the SSRF guard, local use only)
+  dis discover   one discovery pass, printed (dry run: nothing saved unless --save)
+                 --since 24h|7d  --limit 20  --sources github,npm,pypi,mcp,topgg  --check  --json  --save
 
   --config <file>       config file (default $DIS_CONFIG or ./status.config.json)
                         or put the whole JSON in $DIS_CONFIG_JSON
@@ -84,6 +90,43 @@ const describe = (t) => (t.type === 'http' ? t.url : t.type === 'tcp' ? `${t.hos
 if (cmd === 'validate') {
   console.log(`config ok: ${config.targets.length} target(s), ${config.alerts.length} alert webhook(s) active, light-report ${config.lightReport ? `on → ${config.lightReport.url}` : 'off'}`);
   for (const t of config.targets) console.log(`  ${t.name.padEnd(24)} ${t.type.padEnd(4)} every ${t.intervalSeconds}s  ${describe(t)}`);
+  const d = config.discovery;
+  console.log(`discovery ${d.enabled ? `on: every ${d.everyMinutes} min, sources ${Object.keys(d.sources).filter((k) => d.sources[k]).join(',')}, max ${d.maxTargets} watched` : 'off'}; register ${d.register ? 'on' : 'off'}`);
+  process.exit(0);
+}
+
+if (cmd === 'discover') {
+  // Dry run by default: in-memory state, nothing written. --save merges into the state file.
+  const sinceArg = opt('since', `${config.discovery.lookbackHours}h`);
+  const m = String(sinceArg).match(/^(\d+)([hd])$/);
+  if (!m) { console.error('dis discover: --since must look like 24h or 7d'); process.exit(2); }
+  const since = new Date(Date.now() - Number(m[1]) * (m[2] === 'd' ? 24 : 1) * 3600e3);
+  const limit = Number(opt('limit', config.discovery.perRunLimit));
+  const only = opt('sources', '') ? opt('sources').split(',').map((s) => s.trim()) : undefined;
+  const dstore = flag('save') ? new Store(statePath) : new Store(null);
+  const disc = new Discovery({ ...config.discovery, enabled: true }, dstore, null, { log: { log: (...a) => console.error(...a), error: (...a) => console.error(...a) } });
+  const summary = await disc.run({ since, limit, only });
+  let rows = disc.list().filter((b) => b.firstSeen >= summary.at);
+  if (flag('check')) {
+    // One polite, guarded GET per watched endpoint, one at a time.
+    for (const b of rows) {
+      if (b.state !== 'pending') continue;
+      const rec = disc.bots[b.id];
+      const r = await checkHttpGuarded(disc.targetFor(rec));
+      b.state = r.light;
+      b.lastCheck = { at: new Date().toISOString(), detail: r.detail, status: r.status ?? null };
+    }
+  }
+  if (flag('save')) dstore.save();
+  if (flag('json')) console.log(JSON.stringify({ summary, bots: rows }, null, 2));
+  else {
+    for (const b of rows) {
+      const st = b.state === 'pending' ? 'watch' : b.state;
+      console.log(`${st.padEnd(11)} ${b.source.padEnd(6)} ${String(b.name).slice(0, 40).padEnd(40)} ${b.endpoint || ''}  ${b.lastCheck?.detail || b.reason || ''}`);
+    }
+    console.log(`\n${summary.found} found since ${summary.since} (limit ${limit} per source): ${summary.watching} watchable, ${summary.noEndpoint} no endpoint, ${summary.skipped} skipped`);
+    for (const n of summary.notes) console.log(`  note: ${n}`);
+  }
   process.exit(0);
 }
 
@@ -91,6 +134,10 @@ const store = new Store(statePath);
 // In one-shot mode keep stdout clean (table or --json); progress logs go to stderr.
 const log = cmd === 'once' ? { log: (...a) => console.error(...a), error: (...a) => console.error(...a) } : console;
 const monitor = new Monitor(config, store, { log });
+const discovery = cmd === 'serve' && (config.discovery.enabled || config.discovery.register) ? new Discovery(config.discovery, store, monitor, { log }) : null;
+const registrar = discovery && config.discovery.register
+  ? new Registrar(discovery, { trustProxy: process.env.DIS_TRUST_PROXY === '1' || process.env.DIS_TRUST_PROXY === 'true' })
+  : null;
 
 if (cmd === 'once') {
   const snap = await monitor.runOnce({ retryDelayMs: Number(opt('retry-delay', 5000)) });
@@ -115,12 +162,16 @@ if (cmd !== 'serve') { console.error(`dis: unknown command "${cmd}" (try --help)
 const port = Number(opt('port', process.env.PORT || 8080));
 const host = process.env.HOST || '0.0.0.0';
 const checkApi = createCheckApi(checkApiOptions());
-const server = createServer(monitor, { checkApi });
+const server = createServer(monitor, { checkApi, registrar });
 server.listen(port, host, () => {
   console.log(`[dis] ${config.targets.length} target(s); page on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  state: ${statePath || 'memory'}`);
   console.log(`[dis] check API (/check): ${checkApi.enabled ? (process.env.DIS_API_KEY ? 'on, API key required' : 'on, PUBLIC (DIS_PUBLIC_CHECK=1)') : 'off'}`);
   monitor.start();
+  if (discovery) {
+    console.log(`[dis] discovery: ${config.discovery.enabled ? `on, every ${config.discovery.everyMinutes} min` : 'sources off'}; register: ${registrar ? 'on' : 'off'}`);
+    discovery.start();
+  }
 });
-const shutdown = () => { monitor.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000).unref(); };
+const shutdown = () => { discovery?.stop(); monitor.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000).unref(); };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

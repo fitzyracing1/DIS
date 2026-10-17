@@ -103,6 +103,8 @@ Then read the lights back with `curl $LIGHT_REPORT_URL/lights/net-patch-cloud/LI
 | `GET /LIGHT` | `lit` only when every target is lit |
 | `GET /healthz` | `ok`: DIS itself is up (use this for platform health checks) |
 | `GET` / `POST /check` | on-demand check of any public URL: see [below](#on-demand-check-api-for-other-bots) (off by default) |
+| `GET /discovered.json` | discovered bots, when [discovery](#discovery-watch-newly-published-bots-optional) is on |
+| `POST /register` · `/register/verify` · `GET /register/:id` | self-registration (off by default) |
 
 ## On-demand check API (for other bots)
 
@@ -169,6 +171,78 @@ dis check http://10.0.0.5/health --allow-private # skip the guard for your own n
 Exit codes: `0` lit, `1` dark (including blocked), `2` bad input. The CLI uses the same SSRF guard by default, so it is
 safe for a bot to shell out to with an untrusted URL.
 
+## Discovery: watch newly published bots (optional)
+
+DIS can find newly published bots and services and watch the **one endpoint each bot published itself**.
+It only reads official APIs and feeds, and only sends polite GET requests. Discovery is **off by default**.
+
+```json
+"discovery": {
+  "enabled": true,
+  "everyMinutes": 60, "lookbackHours": 24, "perRunLimit": 20,
+  "maxTargets": 50, "perHostMax": 3, "maxRecords": 500, "intervalSeconds": 300,
+  "keywords": ["bot", "discord-bot", "telegram-bot", "slack-bot", "mcp-server", "ai-agent"],
+  "sources": { "github": true, "npm": true, "pypi": true, "mcp": true, "topgg": true },
+  "register": false
+}
+```
+
+(Or set `DIS_DISCOVERY=1` / `DIS_REGISTER=1`.)
+
+| source | official API / feed | "new" means | endpoint DIS may check |
+|---|---|---|---|
+| `github` | REST search `topic:<keyword> created:>=<date> is:public` | repo created in the window | the repo's **homepage** field |
+| `npm` | registry search `keywords:<keyword>` | published in the window (among the top 100 results per keyword) | the package's **homepage** |
+| `pypi` | the official newest-packages RSS feed + JSON API (PyPI has no search API) | in the feed (latest ~40) and matching a keyword | `home_page` / `project_urls.Homepage` |
+| `mcp` | [MCP registry](https://registry.modelcontextprotocol.io) `GET /v0.1/servers?updated_since=` | active, latest version, published in the window | the server's own **remote URL** |
+| `topgg` | documented top.gg API `GET /api/bots` (**needs `TOPGG_TOKEN`**, otherwise skipped) | approved in the window | the bot's **website** field |
+
+Rules DIS follows:
+- **No endpoint, no probing.** If a bot hasn't published a URL, it is listed as `no-endpoint` and nothing is fetched.
+  Homepages on code, package or social sites (github.com, npmjs.com, pypi.org, discord.gg, t.me, …) also count as no endpoint.
+  No port scanning, no crawling, and no extra paths: only the one published URL, plus `robots.txt` on that host.
+- **robots.txt** (RFC 9309) is read before a host is watched and re-read daily. DIS uses the product token `DIS`
+  (a `User-agent: DIS` group wins over `*`). If robots.txt returns 5xx or can't be reached, the host is skipped for now.
+- **The same SSRF guard as `/check`:** endpoints that resolve to private or reserved addresses are skipped, and every check goes through the guard.
+- **Polite:** one GET per check, at most every 5 minutes (`intervalSeconds` can't go lower), no retries,
+  a 64 KB body cap, and a `DIS/x.y (+https://github.com/fitzyracing1/DIS)` User-Agent.
+- **Caps:** at most `maxTargets` bots watched in total and `perHostMax` per host. The newest `maxRecords` bots are remembered.
+- **Respects source rate limits:** sources run one after another, with pauses between requests (GitHub
+  1.5 s, npm 1 s, PyPI 0.5 s). If GitHub reports a rate limit, DIS stops querying it. `GITHUB_TOKEN` is used only if you provide it.
+- **Kept separate:** discovered bots never send alerts, are never mirrored to light-report, and never change the overall
+  light or the cron exit code. They are listed in their own section of the status page and at `GET /discovered.json`
+  (`source`, `firstSeen`, `endpoint`, `state`: `lit` / `dark` / `pending` / `no-endpoint` / `skipped` with a reason).
+- **MCP remotes** expect POST, so for them a GET answered with 2xx-4xx (usually 401, 405 or 406) counts as lit. A 404 or a 5xx counts as dark.
+
+![discovered bots on the status page](docs/status-page-discovery.png)
+
+Dry run (nothing saved, one guarded GET per endpoint with `--check`):
+
+```bash
+dis discover --since 24h --limit 20 --check          # table + notes
+dis discover --sources mcp,npm --since 7d --json     # pick sources, JSON output
+```
+
+### Self-registration
+
+Bot owners can ask a DIS instance to watch them, after proving they control the host:
+
+```bash
+curl -s -X POST https://your-dis.example/register -H 'content-type: application/json' \
+  -d '{"url":"https://my-bot.example/health","name":"my-bot"}'
+# → 202 {"id":"…","token":"dis-verify=…","verifyUrl":"https://my-bot.example/.well-known/dis.txt", …}
+# put the token on its own line in that file, then:
+curl -s -X POST https://your-dis.example/register/verify -d '{"id":"…"}'
+# → 200 {"status":"watching", …}   (409 with a reason while the token isn't there yet)
+curl -s https://your-dis.example/register/<id>     # status
+```
+
+- DIS fetches only `/.well-known/dis.txt` on the **same host**, through the SSRF guard (16 KB cap, no cross-host redirects).
+- After that the endpoint goes through the same robots.txt check and caps as any discovered bot.
+- Pending registrations expire after 24 h. `/register` is limited to 10 requests per hour per IP, with at most 200 pending at once.
+- Ownership is re-checked daily: remove the token from `dis.txt` and DIS stops watching and forgets the bot.
+- The token is never shown on the status page or in JSON.
+
 ## State
 
 State lives in one JSON file, written atomically: `$DIS_STATE`, else `$DATA_DIR/state.json`, else `./data/state.json`.
@@ -211,6 +285,7 @@ dis serve      run forever; web page + JSON on $PORT (default 8080)
 dis once       check everything once; exit 0 = all lit, 1 = something dark, 2 = config error
 dis validate   check the config and list what is enabled
 dis check <url> one guarded lit/dark check: --type http|tcp|dns --expect … --max-ms … --keyword … --record … --json --allow-private
+dis discover   one discovery pass (dry run): --since 24h --limit 20 --sources github,npm,pypi,mcp,topgg --check --json --save
   --config <file>  --state <file>  --no-state  --port <n>  --json (once)  --retry-delay <ms> (once, default 5000)
 ```
 

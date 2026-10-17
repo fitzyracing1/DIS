@@ -58,8 +58,36 @@ Then edit `status.config.json` to watch your own sites. If you `npm link` it, th
 | `http` | `url`, `method` (GET), `expectStatus` (default `"200-399"`; also `200`, `"2xx"`, `[200, 204]`), `keyword`, `headers`, `followRedirects` (true) | status matches, the body contains `keyword` if one is set, and the full response arrives within `maxLatencyMs` |
 | `tcp` | `host`, `port` | the port accepts a connection within `maxLatencyMs` |
 | `dns` | `host`, `recordType` (`A` AAAA CNAME MX TXT NS), `expect` (substring), `server` (e.g. `1.1.1.1`) | it resolves to at least one record, matching `expect` if one is set |
+| `status` | `url` of a provider's public status feed, `format` (`statuspage`, `google`, `apple`), plus `component` / `product` / `service` | the provider's own feed says the service is up (see below) |
 
 Common fields: `name` (letters, digits, `. _ -`), `intervalSeconds` (60), `timeoutMs` (10000), `maxLatencyMs` (5000).
+
+### `status`: provider status feeds
+
+Watch services you depend on but don't run, by reading their **public, official** status feeds.
+Each check is one GET. Targets that share a feed URL share one fetch per round (30 s cache), and the body is capped at 5 MB.
+
+| format | feed | lit when |
+|---|---|---|
+| `statuspage` | Atlassian Statuspage API, e.g. `https://status.twilio.com/api/v2/status.json` | `status.indicator` is in `litIndicators` (default `["none"]`). With `component` (name or id) and `/api/v2/summary.json`: that component's status is in `litComponentStatuses` (default `["operational"]`). |
+| `google` | Google Cloud, Firebase and Google Workspace dashboards' `incidents.json` | no open incident (no `end`, or `end` in the future) whose `status_impact` is in `darkOn` (default `SERVICE_DISRUPTION`, `SERVICE_OUTAGE`), for `product` (title or id) if set. Open `SERVICE_INFORMATION` notices stay lit but appear in the detail. |
+| `apple` | Apple System Status feed `https://www.apple.com/support/systemstatus/data/system_status_en_US.js` (and the developer feed `.../data/developer/system_status_en_US.js`, whose `jsonCallback(...)` wrapper is stripped) | the named `service` (e.g. `"Siri"`, `"APNS"`) has no event in progress. Resolved, completed and upcoming events don't count. |
+
+[`examples/phone-providers.config.json`](examples/phone-providers.config.json) watches what phones depend on, polling every 5 minutes:
+
+- **Apple:** Siri, Find My, iCloud sign-in and backup, iMessage, FaceTime, device activation, and APNs (Push Notification Service).
+- **Firebase:** Cloud Messaging (FCM), Authentication, Phone Number Verification, and all of Firebase.
+- **Google:** all of Google Cloud, plus Workspace Gmail, Sign In, Voice, and all of Workspace.
+- **Twilio:** overall, Programmable Messaging, Programmable Voice US1, and Carrier Network.
+
+```bash
+node bin/dis.mjs once --config examples/phone-providers.config.json
+```
+
+US carriers (Verizon, AT&T, T-Mobile) aren't included because none publishes an official, public, machine-readable status feed.
+AT&T's outage check needs a sign-in, T-Mobile's network APIs need a business agreement and NDA, and `verizon.statuspage.io` is an unused placeholder page.
+DIS doesn't scrape. Note that Statuspage's overall indicator goes dark for *any* minor incident anywhere on the page,
+so for a big provider like Twilio the per-component targets are usually the more useful lights.
 
 ### Lit, dark and debounce
 

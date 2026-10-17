@@ -182,6 +182,7 @@ It only reads official APIs and feeds, and only sends polite GET requests. Disco
   "everyMinutes": 60, "lookbackHours": 24, "perRunLimit": 20,
   "maxTargets": 50, "perHostMax": 3, "maxRecords": 500, "intervalSeconds": 300,
   "keywords": ["bot", "discord-bot", "telegram-bot", "slack-bot", "mcp-server", "ai-agent"],
+  "requireOwnership": ["github", "npm"],
   "sources": { "github": true, "npm": true, "pypi": true, "mcp": true, "topgg": true },
   "register": false
 }
@@ -201,6 +202,12 @@ Rules DIS follows:
 - **No endpoint, no probing.** If a bot hasn't published a URL, it is listed as `no-endpoint` and nothing is fetched.
   Homepages on code, package or social sites (github.com, npmjs.com, pypi.org, discord.gg, t.me, …) also count as no endpoint.
   No port scanning, no crawling, and no extra paths: only the one published URL, plus `robots.txt` on that host.
+- **Ownership for GitHub and npm homepages.** A repo or package homepage is watched only if that host's
+  `/.well-known/dis.txt` has a line naming the project: `github:owner/repo` (or `https://github.com/owner/repo`)
+  or `npm:package` (or `https://www.npmjs.com/package/package`), case-insensitive. Otherwise the bot is listed as
+  `unverified`, with the exact line to add. DIS looks again once a day, and removing the line stops the watch.
+  This is set by `"requireOwnership": ["github", "npm"]` (the default); use `[]` to turn it off. MCP remotes and top.gg websites
+  are published through their own registries, so they don't need the file.
 - **robots.txt** (RFC 9309) is read before a host is watched and re-read daily. DIS uses the product token `DIS`
   (a `User-agent: DIS` group wins over `*`). If robots.txt returns 5xx or can't be reached, the host is skipped for now.
 - **The same SSRF guard as `/check`:** endpoints that resolve to private or reserved addresses are skipped, and every check goes through the guard.
@@ -211,7 +218,7 @@ Rules DIS follows:
   1.5 s, npm 1 s, PyPI 0.5 s). If GitHub reports a rate limit, DIS stops querying it. `GITHUB_TOKEN` is used only if you provide it.
 - **Kept separate:** discovered bots never send alerts, are never mirrored to light-report, and never change the overall
   light or the cron exit code. They are listed in their own section of the status page and at `GET /discovered.json`
-  (`source`, `firstSeen`, `endpoint`, `state`: `lit` / `dark` / `pending` / `no-endpoint` / `skipped` with a reason).
+  (`source`, `firstSeen`, `endpoint`, `state`: `lit` / `dark` / `pending` / `no-endpoint` / `unverified` / `skipped` with a reason).
 - **MCP remotes** expect POST, so for them a GET answered with 2xx-4xx (usually 401, 405 or 406) counts as lit. A 404 or a 5xx counts as dark.
 
 ![discovered bots on the status page](docs/status-page-discovery.png)

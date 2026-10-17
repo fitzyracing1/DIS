@@ -102,6 +102,72 @@ Then read the lights back with `curl $LIGHT_REPORT_URL/lights/net-patch-cloud/LI
 | `GET /lights/:name` · `/lights/:name/LIGHT` | one target as JSON · `lit` / `dark` / `pending` |
 | `GET /LIGHT` | `lit` only when every target is lit |
 | `GET /healthz` | `ok`: DIS itself is up (use this for platform health checks) |
+| `GET` / `POST /check` | on-demand check of any public URL: see [below](#on-demand-check-api-for-other-bots) (off by default) |
+
+## On-demand check API (for other bots)
+
+Other bots can ask DIS whether a URL is lit or dark right now:
+
+```bash
+curl -s -X POST https://your-dis.example/check -H "Authorization: Bearer $DIS_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com","type":"http","expect":200,"maxMs":3000}'
+curl -s -H "X-API-Key: $DIS_API_KEY" "https://your-dis.example/check?url=https://example.com&keyword=Example"
+```
+
+```json
+{ "state": "lit", "bit": 0, "type": "http", "target": "https://example.com/", "status": 200, "ms": 231,
+  "detail": "HTTP 200 in 231ms", "checkedAt": "2026-10-17T14:35:50.539Z", "redirects": 0, "bytes": 1256, "truncated": false }
+```
+
+| field | for | meaning |
+|---|---|---|
+| `url` | all | `https://…` for http; `host:port` or `tcp://host:port` for tcp; a hostname for dns (`host` also works) |
+| `type` | all | `http` (default), `tcp`, `dns` |
+| `expect` | http | status: `200`, `"2xx"`, `"200-299"`, `[200, 204]` or `"200,204"` (default `"200-399"`) |
+| `expect` | dns | substring that one of the records must contain |
+| `maxMs` | all | slower than this is dark (default 5000, capped at 10000) |
+| `keyword` | http | the body must contain it (only the first 256 KB is read) |
+| `method` | http | `GET` (default) or `HEAD` |
+| `port`, `recordType` | tcp, dns | port 1-65535 · `A` AAAA CNAME MX TXT NS |
+
+A finished check always returns HTTP 200, with `state` set to lit or dark. Other responses: `400` bad input,
+`401` missing or wrong key, `404` the API is off, `429` rate limited (see `Retry-After`), `503` too many checks at once.
+
+**It is off by default.** To turn it on:
+
+| env | effect |
+|---|---|
+| `DIS_API_KEY` | on; callers must send `Authorization: Bearer <key>` or `X-API-Key: <key>` (always required once a key is set) |
+| `DIS_PUBLIC_CHECK=1` | on with no key: anyone can call it (rate limits still apply) |
+| `DIS_CHECK_RATE` | checks per minute per client IP (default 30) |
+| `DIS_CHECK_CONCURRENCY` | checks running at once (default 10) |
+| `DIS_TRUST_PROXY=1` | behind one reverse proxy (Railway, Fly, nginx): rate-limit on the last `X-Forwarded-For` hop |
+| `DIS_CHECK_ALLOW_CIDRS` | operator escape hatch, e.g. `10.20.0.0/16`, to allow checking your own private range |
+
+**SSRF protection.** The caller picks the URL, so every API check goes through `lib/net-guard.mjs`:
+- Only `http:`/`https:` URLs are accepted, and URLs with `user:pass@` are rejected.
+- The hostname is resolved by DIS, and the connection is made only to the addresses it checked, so DNS rebinding can't swap them.
+  If **any** address is private, loopback, link-local, a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`),
+  CGNAT, multicast or reserved, the check is refused. IPv4-mapped, NAT64 and 6to4 forms are decoded and checked too.
+- Redirects (at most 3) are re-checked at every hop.
+- Each check has one overall timeout (`maxMs` + 2 s, capped at 10 s), the response body is capped at 256 KB,
+  and a 4 KB limit applies to the request body.
+- DNS checks never reveal private answers.
+
+Targets in `status.config.json` are chosen by you, not by callers, so they are not filtered and you can watch internal services.
+
+### `dis check` (CLI)
+
+```bash
+dis check https://example.com                    # ● lit  https://example.com/  HTTP 200 in 60ms   (exit 0)
+dis check example.com:5432 --type tcp --max-ms 2000
+dis check example.com --type dns --record MX --json
+dis check http://10.0.0.5/health --allow-private # skip the guard for your own network (local use only)
+```
+
+Exit codes: `0` lit, `1` dark (including blocked), `2` bad input. The CLI uses the same SSRF guard by default, so it is
+safe for a bot to shell out to with an untrusted URL.
 
 ## State
 
@@ -144,6 +210,7 @@ GitHub may delay scheduled runs and disables them after 60 days without repo act
 dis serve      run forever; web page + JSON on $PORT (default 8080)
 dis once       check everything once; exit 0 = all lit, 1 = something dark, 2 = config error
 dis validate   check the config and list what is enabled
+dis check <url> one guarded lit/dark check: --type http|tcp|dns --expect … --max-ms … --keyword … --record … --json --allow-private
   --config <file>  --state <file>  --no-state  --port <n>  --json (once)  --retry-delay <ms> (once, default 5000)
 ```
 

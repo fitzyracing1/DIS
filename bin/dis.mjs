@@ -3,6 +3,7 @@
 //   dis serve      long-running: checks on intervals, web page + JSON on $PORT (default)
 //   dis once       one-shot (cron / GitHub Actions): check everything, exit 0 all lit, 1 any dark
 //   dis validate   check the config file and print the targets
+//   dis check <url> one guarded lit/dark check of any URL (no config needed)
 // Options: --config <file>  --state <file>  --port <n>  --json  --retry-delay <ms>  --no-state
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,12 +11,15 @@ import { loadConfig, normalizeConfig } from '../lib/config.mjs';
 import { Store } from '../lib/store.mjs';
 import { Monitor } from '../lib/monitor.mjs';
 import { createServer } from '../lib/server.mjs';
+import { createCheckApi, checkApiOptions, parseCheckRequest, runSafeCheck } from '../lib/check-api.mjs';
+import { makeGuard, cidrsFromEnv } from '../lib/net-guard.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const VALUE_OPTS = ['--config', '--state', '--port', '--retry-delay'];
-const cmd = argv.find((a, i) => !a.startsWith('-') && !VALUE_OPTS.includes(argv[i - 1])) || 'serve';
+const VALUE_OPTS = ['--config', '--state', '--port', '--retry-delay', '--type', '--expect', '--max-ms', '--keyword', '--record'];
+const positionals = argv.filter((a, i) => !a.startsWith('-') && !VALUE_OPTS.includes(argv[i - 1]));
+const cmd = positionals[0] || 'serve';
 
 if (flag('help') || flag('h') || cmd === 'help') {
   console.log(`dis — lit (up) / dark (down) checks for your sites
@@ -23,6 +27,9 @@ if (flag('help') || flag('h') || cmd === 'help') {
   dis serve      run forever; web page + JSON on $PORT (default 8080)
   dis once       check everything once; exit 0 = all lit, 1 = something dark, 2 = config error
   dis validate   check the config and list targets
+  dis check <url> one lit/dark check of any URL; exit 0 = lit, 1 = dark, 2 = bad input
+                  --type http|tcp|dns  --expect <status|record>  --max-ms <n>  --keyword <s>
+                  --record A|AAAA|...  --json  --allow-private (skip the SSRF guard, local use only)
 
   --config <file>       config file (default $DIS_CONFIG or ./status.config.json)
                         or put the whole JSON in $DIS_CONFIG_JSON
@@ -32,6 +39,31 @@ if (flag('help') || flag('h') || cmd === 'help') {
   --json                once: print the JSON snapshot instead of a table
   --retry-delay <ms>    once: wait between retries of a failing target (default 5000)`);
   process.exit(0);
+}
+
+if (cmd === 'check') {
+  const target = positionals[1];
+  let spec;
+  try {
+    spec = parseCheckRequest({
+      type: opt('type', 'http'),
+      url: target,
+      expect: opt('expect', undefined),
+      maxMs: opt('max-ms', undefined),
+      keyword: opt('keyword', undefined),
+      recordType: opt('record', undefined),
+    });
+  } catch (e) {
+    console.error(`dis check: ${e.message}\nusage: dis check <url> [--type http|tcp|dns] [--expect 200] [--max-ms 5000] [--json]`);
+    process.exit(2);
+  }
+  // The CLI uses the same SSRF guard as the API, so a bot can shell out to it with untrusted URLs.
+  // --allow-private opens every range for an operator checking their own internal hosts.
+  const guard = makeGuard({ allowCidrs: flag('allow-private') ? ['0.0.0.0/0', '::/0'] : cidrsFromEnv(process.env.DIS_CHECK_ALLOW_CIDRS) });
+  const r = await runSafeCheck(spec, { guard });
+  if (flag('json')) console.log(JSON.stringify(r, null, 2));
+  else console.log(`${r.state === 'lit' ? '● lit ' : '○ dark'} ${r.target}  ${r.detail}`);
+  process.exit(r.state === 'lit' ? 0 : 1);
 }
 
 let config;
@@ -82,9 +114,11 @@ if (cmd !== 'serve') { console.error(`dis: unknown command "${cmd}" (try --help)
 
 const port = Number(opt('port', process.env.PORT || 8080));
 const host = process.env.HOST || '0.0.0.0';
-const server = createServer(monitor);
+const checkApi = createCheckApi(checkApiOptions());
+const server = createServer(monitor, { checkApi });
 server.listen(port, host, () => {
   console.log(`[dis] ${config.targets.length} target(s); page on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  state: ${statePath || 'memory'}`);
+  console.log(`[dis] check API (/check): ${checkApi.enabled ? (process.env.DIS_API_KEY ? 'on, API key required' : 'on, PUBLIC (DIS_PUBLIC_CHECK=1)') : 'off'}`);
   monitor.start();
 });
 const shutdown = () => { monitor.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000).unref(); };

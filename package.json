@@ -18,5 +18,9 @@
     "start": "node bin/dis.mjs serve",
     "once": "node bin/dis.mjs once",
     "test": "node --test test/*.test.mjs"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/fitzyracing1"
   }
 }

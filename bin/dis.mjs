@@ -124,7 +124,7 @@ if (cmd === 'discover') {
       const st = b.state === 'pending' ? 'watch' : b.state;
       console.log(`${st.padEnd(11)} ${b.source.padEnd(6)} ${String(b.name).slice(0, 40).padEnd(40)} ${b.endpoint || ''}  ${b.lastCheck?.detail || b.reason || ''}`);
     }
-    console.log(`\n${summary.found} found since ${summary.since} (limit ${limit} per source): ${summary.watching} watchable, ${summary.noEndpoint} no endpoint, ${summary.skipped} skipped`);
+    console.log(`\n${summary.found} found since ${summary.since} (limit ${limit} per source): ${summary.watching} watchable, ${summary.noEndpoint} no endpoint, ${summary.unverified} unverified (no dis.txt ownership line), ${summary.skipped} skipped`);
     for (const n of summary.notes) console.log(`  note: ${n}`);
   }
   process.exit(0);

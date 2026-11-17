@@ -166,6 +166,12 @@ const server = createServer(monitor, { checkApi, registrar });
 server.listen(port, host, () => {
   console.log(`[dis] ${config.targets.length} target(s); page on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  state: ${statePath || 'memory'}`);
   console.log(`[dis] check API (/check): ${checkApi.enabled ? (process.env.DIS_API_KEY ? 'on, API key required' : 'on, PUBLIC (DIS_PUBLIC_CHECK=1)') : 'off'}`);
+  const pw = checkApi.paywall;
+  if (pw?.configured) {
+    console.log(`[dis] paid /check/report: x402 ${pw.price} USDC on ${pw.network} → ${pw.payTo.slice(0, 6)}…${pw.payTo.slice(-4)}`);
+  } else {
+    console.log(`[dis] paid /check/report: off (${pw?.reason || 'set DIS_X402_PAY_TO'})`);
+  }
   monitor.start();
   if (discovery) {
     console.log(`[dis] discovery: ${config.discovery.enabled ? `on, every ${config.discovery.everyMinutes} min` : 'sources off'}; register: ${registrar ? 'on' : 'off'}`);

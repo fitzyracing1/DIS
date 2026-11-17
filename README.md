@@ -8,8 +8,10 @@ Point DIS at your sites and it checks them on a schedule. Each target is **lit**
 (down, erroring, or too slow). DIS sends a webhook when a light changes, serves a small status page plus JSON,
 and can also run as a GitHub Actions cron job, so you don't need a server.
 
-Node 18+, **zero dependencies**, MIT. Part of the lit/dark family with
-[light-report](https://github.com/fitzyracing1/light-report): DIS can mirror every target to a light-report server.
+Node 18+, MIT. Core status checks need no config beyond `status.config.json`; optional
+`@x402/*` packages power the paid `/check/report` route for AI agents. Part of the lit/dark
+family with [light-report](https://github.com/fitzyracing1/light-report): DIS can mirror every
+target to a light-report server.
 
 ![DIS status page](docs/status-page.png)
 
@@ -17,9 +19,10 @@ Node 18+, **zero dependencies**, MIT. Part of the lit/dark family with
 
 ```bash
 git clone https://github.com/fitzyracing1/DIS.git && cd DIS
+npm ci                     # installs optional @x402/* deps for paid /check/report
 node bin/dis.mjs once      # check everything once: exit 0 = all lit, 1 = something dark
 node bin/dis.mjs serve     # run forever; open http://localhost:8080
-npm test                   # node:test, no install needed
+npm test                   # node:test
 ```
 
 Then edit `status.config.json` to watch your own sites. If you `npm link` it, the command is just `dis`.
@@ -130,7 +133,8 @@ Then read the lights back with `curl $LIGHT_REPORT_URL/lights/net-patch-cloud/LI
 | `GET /lights/:name` · `/lights/:name/LIGHT` | one target as JSON · `lit` / `dark` / `pending` |
 | `GET /LIGHT` | `lit` only when every target is lit |
 | `GET /healthz` | `ok`: DIS itself is up (use this for platform health checks) |
-| `GET` / `POST /check` | on-demand check of any public URL: see [below](#on-demand-check-api-for-other-bots) (off by default) |
+| `GET` / `POST /check` | free on-demand check of any public URL: see [below](#on-demand-check-api-for-other-bots) (off by default) |
+| `GET` / `POST /check/report` | paid full report via [x402](#for-agents-paid-check-via-x402) (needs `DIS_X402_PAY_TO`) |
 | `GET /discovered.json` | discovered bots, when [discovery](#discovery-watch-newly-published-bots-optional) is on |
 | `POST /register` · `/register/verify` · `GET /register/:id` | self-registration (off by default) |
 
@@ -198,6 +202,67 @@ dis check http://10.0.0.5/health --allow-private # skip the guard for your own n
 
 Exit codes: `0` lit, `1` dark (including blocked), `2` bad input. The CLI uses the same SSRF guard by default, so it is
 safe for a bot to shell out to with an untrusted URL.
+
+## For agents: paid `/check` via x402
+
+Agents can keep using free **`/check`** for a basic lit/dark result (rate limits still apply).
+For a **full report** (response headers, redirect chain, body SHA-256, content type, keyword match),
+call **`/check/report`**. That route is gated by the [x402](https://www.x402.org) payment standard:
+unpaid requests get **HTTP 402** with a `PAYMENT-REQUIRED` header; paid requests are verified and
+settled through a facilitator, then the report is returned.
+
+| env | default | meaning |
+|---|---|---|
+| `DIS_X402_PAY_TO` | _(empty)_ | Receiving EVM address. **Required** to enable `/check/report`. Without it the paid route returns `503` with a clear error; free `/check` keeps working. |
+| `DIS_X402_NETWORK` | `eip155:84532` | CAIP-2 network (or alias `base-sepolia` / `base`). Start on Base Sepolia; switch to `eip155:8453` (or `base`) for mainnet. |
+| `DIS_X402_PRICE` | `$0.01` | USDC per paid call (dollar-string; uses the network's default USDC). |
+| `DIS_X402_FACILITATOR_URL` | `https://x402.org/facilitator` | Facilitator for verify/settle. Testnet default needs no API key; mainnet needs a production facilitator (see [CDP seller docs](https://docs.cdp.coinbase.com/x402/seller/get-discovered)). |
+
+The paid route advertises **Bazaar** discovery metadata (input/output schema) so CDP Bazaar can index it after a settled payment.
+
+**Local test on Base Sepolia**
+
+1. Put a throwaway receiving address in `.env` (see `.env.example`): `DIS_X402_PAY_TO=0x…`, keep `DIS_X402_NETWORK=eip155:84532`.
+2. Enable the free API too: `DIS_PUBLIC_CHECK=1`.
+3. `npm ci && node bin/dis.mjs serve`
+4. `curl -i 'http://localhost:8080/check/report?url=https://example.com'` → `402` + `PAYMENT-REQUIRED`.
+5. Pay and retry with an x402 client (wallet needs Base Sepolia USDC):
+
+```js
+// Node — @x402/fetch pays automatically on 402
+import { wrapFetchWithPaymentFromConfig } from '@x402/fetch';
+import { ExactEvmScheme } from '@x402/evm/exact/client';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const account = privateKeyToAccount(process.env.PRIVATE_KEY); // Base Sepolia USDC
+const fetchWithPay = wrapFetchWithPaymentFromConfig(fetch, {
+  schemes: [{ network: 'eip155:84532', client: new ExactEvmScheme(account) }],
+});
+
+const res = await fetchWithPay('http://localhost:8080/check/report?url=https://example.com');
+console.log(await res.json()); // { state, tier: "full", headers, bodyHash, ... }
+```
+
+```python
+# Python — x402 httpx client (pip install "x402[httpx]")
+import asyncio, os
+from eth_account import Account
+from x402 import x402Client
+from x402.http.clients import x402HttpxClient
+from x402.mechanisms.evm import EthAccountSigner
+from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+async def main():
+    client = x402Client()
+    register_exact_evm_client(client, EthAccountSigner(Account.from_key(os.environ["EVM_PRIVATE_KEY"])))
+    async with x402HttpxClient(client) as http:
+        r = await http.get("http://localhost:8080/check/report", params={"url": "https://example.com"})
+        print(r.json())
+
+asyncio.run(main())
+```
+
+Do not commit funded keys. For production: set a real `DIS_X402_PAY_TO`, switch `DIS_X402_NETWORK` to Base mainnet (`eip155:8453`), point `DIS_X402_FACILITATOR_URL` at a mainnet facilitator, deploy, then complete one paid call so Bazaar can index the route.
 
 ## Discovery: watch newly published bots (optional)
 
